@@ -1,0 +1,22 @@
+{
+  "name": "testnet-faucet",
+  "version": "1.0.0",
+  "description": "Token faucet for partakers of ContinuumDAO testnet launch",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "nodemon app.js"
+  },
+  "author": "@hal0177",
+  "license": "ISC",
+  "devDependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.11.1",
+    "express": "^4.19.1",
+    "express-rate-limit": "^7.2.0",
+    "helmet": "^7.1.0",
+    "mongoose": "^8.2.3",
+    "nodemon": "^3.1.0"
+  }
+}
