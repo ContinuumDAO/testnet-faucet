@@ -16,8 +16,7 @@ const TokenSchema = new mongoose.Schema({
 
 const ClaimSchema = new mongoose.Schema({
     ipAddress: {type: String },
-    walletAddress: {type: String },
-    lastVisit: {type: Date }
+    walletAddress: {type: String }
 }, {timestamps: true})
 
 const ChainSchema = new mongoose.Schema({
@@ -32,7 +31,6 @@ const Chain = mongoose.model("Chain", ChainSchema, "ChainData")
 
 dotenv.config()
 const DATABASE_URL = process.env.DATABASE_URL
-const RPC_URL = process.env.RPC_URL
 const PRIVATE_KEY = process.env.PRIVATE_KEY
 
 mongoose.connect(DATABASE_URL, {dbName: "Faucet"})
@@ -54,12 +52,11 @@ app.use(cors())
 app.use(express.json())
 
 const PORT = 3000
-const REQ_LIMIT = 0
 const ABI = [
     "function mint(address recipient, uint256 amount) returns (bool success)"
 ]
 
-const sendTokens = async (address) => {
+const sendTokens = async (recipient) => {
     const chainData = await Chain.find().lean()
     const signers = []
     const txRequests = []
@@ -67,19 +64,26 @@ const sendTokens = async (address) => {
     for (let i = 0; i < chainData.length; i++) {
         const provider = new ethers.JsonRpcProvider(chainData[i].rpcUrl)
         signers[i] = new ethers.Wallet(PRIVATE_KEY, provider)
+        const signer = await signers[i].getAddress()
+        let nonce = await provider.getTransactionCount(signer)
         const tokens = await Token.find({
             chainId: chainData[i].chainId
         }).lean()
 
         for (let j = 0; j < tokens.length; j++) {
-            const contract = new ethers.Contract(tokens[j].address, ABI, provider)
+            const contract = new ethers.Contract(tokens[j].address, ABI, signers[i])
             const amount = tokens[j].distributionAmount
-            txRequests[i].push(contract.mint(address, amount))
+            txRequests.push(contract.mint(recipient, amount, {nonce}))
+            nonce++
         }
     }
 
-    const results = await Promise.all(txRequests)
-    const receipts = await Promise.all(results.wait())
+    try {
+        const results = await Promise.all(txRequests)
+        await Promise.all(results.map(result => result.wait()))
+    } catch (err) {
+        throw new Error(`Error with confirming transactions, please try again. ${err.message}`)
+    }
 }
 
 
@@ -138,7 +142,7 @@ app.post("/add-token", async (req, res) => {
 
         if (addressExistsOnChain) throw new Error(`This token on this chain has already been added.`)
 
-        await Token.create({address, chainId, distributionAmount})
+        await Token.create({name, address, chainId, distributionAmount})
 
         res.send(`SUCCESS: Token: ${name}, address: ${address}, chain ID: ${chainId}, amount: ${distributionAmount}`)
     } catch (err) {
@@ -148,8 +152,8 @@ app.post("/add-token", async (req, res) => {
 })
 
 app.post("/request-tokens", async (req, res) => {
-    const ip = req.headers["x-real-ip"] || req.socket.remoteAddress
-    console.log(`Requesting from IP Address: ${ip}`)
+    const ipAddress = req.headers["x-real-ip"] || req.socket.remoteAddress
+    console.log(`Requesting from IP Address: ${ipAddress}`)
 
     try {
         const { body } = req
@@ -161,18 +165,19 @@ app.post("/request-tokens", async (req, res) => {
         const validWalletAddress = ethers.isAddress(walletAddress)
         if (!validWalletAddress) throw new Error(`Invalid wallet address.`)
 
-        let ipClaimed = await Claim.findOne({
-            ipAddress
-        }).lean()
         let addressClaimed = await Claim.findOne({
             walletAddress
         }).lean()
+        let ipClaimed = await Claim.findOne({
+            ipAddress
+        }).lean()
 
-        if (ipClaimed || addressClaimed) throw new Error(`You have already claimed from the testnet faucet.`)
+        if (addressClaimed || ipClaimed) throw new Error(`You have already claimed from the testnet faucet.`)
 
-        const txHash = await sendTokens(walletAddress)
+        await Claim.create({ipAddress, walletAddress})
+        await sendTokens(walletAddress)
 
-        res.status(200)
+        res.status(200).send(`SUCCESS: Address: ${ walletAddress } has received testnet tokens.`)
     } catch (err) {
         console.error(err.message)
         res.status(400).send(err.message)
